@@ -1,0 +1,49 @@
+use crate::plugin::Plugin;
+use iced::Task;
+
+pub struct Shell;
+
+impl Plugin for Shell {
+    fn can_handle(&self, input: &str) -> bool {
+        input.trim().starts_with(">")
+    }
+
+    fn execute(&self, input: &str) -> Task<Result<String, String>> {
+        let clean_input = input.trim().trim_start_matches('>').trim();
+
+        if clean_input.is_empty() {
+            return Task::future(async { Ok(String::new()) });
+        }
+
+        let clean_input = clean_input.to_string();
+
+        Task::perform(async move {
+            run_command_logic(clean_input).await
+        }, |res| res)
+    }
+}
+
+async fn run_command_logic(input: String) -> Result<String, String> {
+    let args = shell_words::split(&input)
+        .map_err(|e| format!("Parse error: {}", e))?;
+
+    if args.is_empty() {
+        return Ok(String::new());
+    }
+
+    let command = &args[0];
+    let arguments = &args[1..];
+
+    let output = tokio::process::Command::new(command)
+        .args(arguments)
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        String::from_utf8(output.stdout).map_err(|e| e.to_string())
+    } else {
+        let err = String::from_utf8(output.stderr).unwrap_or("Unknown error".to_string());
+        Err(err)
+    }
+}
