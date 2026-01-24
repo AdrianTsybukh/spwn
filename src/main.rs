@@ -2,6 +2,7 @@ mod plugins;
 mod plugin;
 
 use crate::plugin::Plugin;
+use crate::plugins::apps::{App, get_all_apps};
 use iced::widget::{column, text, text_input};
 use iced::{Element, Size, Task, window};
 use iced::{Event, Subscription, event};
@@ -22,11 +23,13 @@ struct Launcher {
     output: String,
     input_id: iced::widget::Id,
     plugins: Vec<Box<dyn Plugin>>,
+    apps: Vec<App>,
 }
 
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let input_id = iced::widget::Id::unique();
+        let apps = get_all_apps();
 
         (
             Self {
@@ -36,7 +39,8 @@ impl Launcher {
                 plugins: vec![ // список плагінів. поки тільки shell для виконування команд. будемо
                                // додавати інші(калькулятор, запуск програм, пошук веб)
                     Box::new(plugins::shell::Shell),
-                ]
+                ],
+                apps: apps,
             },
             iced::widget::operation::focus(input_id)
         )
