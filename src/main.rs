@@ -3,119 +3,205 @@ mod plugin;
 
 use crate::plugin::Plugin;
 use crate::plugins::apps::{App, get_all_apps};
-use iced::widget::{column, scrollable, text, text_input};
-use iced::{Element, Size, Task, window};
+use iced::widget::{column, container, scrollable, text, text_input};
+use iced::{Color, Element, Font, Length, Size, Task, Theme, window};
 use iced::{Event, Subscription, event};
 use iced::keyboard::{self, key::Named};
 
-// повідомлення програми. можна сказати тригери для самого функціоналу.
 #[derive(Debug, Clone)]
 enum Message {
     Run,
     Content(String),
     Completed(Result<String, String>),
     Close,
+    NextResult,
+    PrevResult,
 }
 
-// статус програми. збереження основної інформації
 struct Launcher {
     prompt: String,
     output: String,
     input_id: iced::widget::Id,
+    window_id: iced::window::Id,
     plugins: Vec<Box<dyn Plugin>>,
     apps: Vec<App>,
-    filtered_apps: Vec<String>,
+    filtered_apps: Vec<App>,
+    selected_index: usize,
 }
 
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let input_id = iced::widget::Id::unique();
-        let apps = get_all_apps();
-
+        let window_id = iced::window::Id::unique();
         (
             Self {
                 prompt: String::new(),
                 output: String::new(),
                 input_id: input_id.clone(),
-                plugins: vec![ // список плагінів. поки тільки shell для виконування команд. будемо
-                               // додавати інші(калькулятор, запуск програм, пошук веб)
+                window_id,
+                plugins: vec![
                     Box::new(plugins::shell::Shell),
+                    Box::new(plugins::app::AppPlugin),
                 ],
-                apps: apps,
+                apps: get_all_apps(),
                 filtered_apps: vec![],
+                selected_index: 0,
             },
             iced::widget::operation::focus(input_id)
         )
     }
-}
 
-impl Launcher {
     fn subscription(&self) -> Subscription<Message> {
         event::listen().filter_map(|event| {
-            match event {
-                Event::Keyboard(keyboard::Event::KeyReleased {
-                    key: keyboard::Key::Named(Named::Escape), // вихід при натисканні escape
-                    ..
-                }) => Some(Message::Close),
-
-                _ => None,
+            if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+                match key {
+                    keyboard::Key::Named(Named::Escape) => Some(Message::Close),
+                    keyboard::Key::Named(Named::ArrowDown) => Some(Message::NextResult),
+                    keyboard::Key::Named(Named::ArrowUp) => Some(Message::PrevResult),
+                    _ => None,
+                }
+            } else {
+                None
             }
-        }) 
+        })
     }
-}
 
-impl Launcher {
-    fn view(&self) -> Element<'_, Message> { // метод view для малювання інтерфейсу.
-        column![
-            text_input("enter", &self.prompt).id(self.input_id.clone()).on_input(Message::Content).on_submit(Message::Run),
-            text(&self.output),
-        ].into()
-    }
-}
-
-impl Launcher {
-    fn update(&mut self, message: Message) -> Task<Message> { // метод update для оновлення та
-                                                              // обробки повідомлень
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Run => {
-                let prompt = self.prompt.clone();
-                for plugin in &self.plugins {
-                    if plugin.can_handle(&prompt) {
-                        return plugin.execute(&prompt).map(Message::Completed);
+            Message::Content(prompt) => {
+                self.prompt = prompt;
+                self.selected_index = 0;
+                self.output.clear();
+
+                if self.prompt.is_empty() {
+                    self.filtered_apps.clear();
+                    return window::resize(self.window_id, Size { width: 500.0, height: 60.0 });
+                }
+
+                if !self.prompt.starts_with('>') {
+                    self.filtered_apps = self.apps
+                        .iter()
+                        .filter(|app| app.name.to_lowercase().contains(&self.prompt.to_lowercase()))
+                        .cloned()
+                        .collect();
+                } else {
+                    self.filtered_apps.clear();
+                }
+
+                let height = if self.filtered_apps.is_empty() { 60.0 } else { 400.0 };
+                return window::resize(self.window_id, Size { width: 500.0, height });
+            }
+
+            Message::NextResult => {
+                if !self.filtered_apps.is_empty() {
+                    self.selected_index = (self.selected_index + 1) % self.filtered_apps.len();
+                }
+            }
+
+            Message::PrevResult => {
+                if !self.filtered_apps.is_empty() {
+                    if self.selected_index == 0 {
+                        self.selected_index = self.filtered_apps.len() - 1;
+                    } else {
+                        self.selected_index -= 1;
                     }
                 }
-                self.output = "No plugin found.".to_string();
             }
+
+            Message::Run => {
+                for plugin in &self.plugins {
+                    if plugin.can_handle(&self.prompt) {
+                        return plugin.execute(&self.prompt).map(Message::Completed);
+                    } else {
+                        if let Some(app) = self.filtered_apps.get(self.selected_index) {
+                            println!("Launching: {}", app.name);
+                            let res = plugin.execute(app.exec_path.as_str()).map(Message::Completed);
+                            return res;
+                        }
+                    }
+                }
+            }
+
             Message::Completed(result) => {
                 match result {
                     Ok(out) => self.output = out,
-                    Err(e) => self.output = e.to_string(),
+                    Err(e) => self.output = e,
                 }
+                return window::resize(self.window_id, Size { width: 500.0, height: 500.0 });
             }
-            Message::Content(prompt) => {
-                self.prompt = prompt;
-            }
-            Message::Close => {
-                std::process::exit(0);
-            }
+
+            Message::Close => std::process::exit(0),
         }
         Task::none()
     }
+
+    fn view(&self) -> Element<'_, Message> {
+        let input = text_input("Search apps or use > for commands...", &self.prompt)
+            .id(self.input_id.clone())
+            .on_input(Message::Content)
+            .on_submit(Message::Run)
+            .padding(15)
+            .size(20);
+
+        let mut content = column![container(input).padding(10)].spacing(0);
+
+        if !self.filtered_apps.is_empty() {
+            let app_list = column(
+                self.filtered_apps.iter().enumerate().map(|(i, app)| {
+                    let is_selected = i == self.selected_index;
+                    
+                    container(
+                        text(&app.name)
+                            .size(16)
+                            .font(Font::MONOSPACE)
+                    )
+                    .width(Length::Fill)
+                    .padding(10)
+                    .style(move |_theme| { 
+                        if is_selected {
+                            container::Style::default().background(Color::from_rgb(0.2, 0.4, 0.8)).color(Color::WHITE)
+                        } else {
+                            container::Style::default()
+                        }
+                    })
+                    .into()
+                }).collect::<Vec<Element<'_, Message>>>()
+            );
+
+            content = content.push(scrollable(app_list).height(Length::Fixed(340.0)));
+        }
+
+        if !self.output.is_empty() {
+            content = content.push(
+                scrollable(
+                    container(text(&self.output).font(Font::MONOSPACE))
+                        .padding(15)
+                        .width(Length::Fill)
+                ).height(Length::Fill)
+            );
+        }
+
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
 }
 
-
 fn main() -> iced::Result {
-    let settings = iced::window::Settings {
+    let settings = window::Settings {
         decorations: false,
         resizable: false,
-        size: Size {width: 500_f32, height: 500_f32},
+        size: Size { width: 500.0, height: 500.0 },
         level: window::Level::AlwaysOnTop,
         ..Default::default()
     };
+
     iced::application(Launcher::new, Launcher::update, Launcher::view)
         .title("spwn")
         .window(settings)
         .subscription(Launcher::subscription)
         .centered()
+        .theme(Theme::Dark)
         .run()
 }

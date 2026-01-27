@@ -3,7 +3,7 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct App {
     pub name: String,
     pub exec_path: String,

@@ -23,7 +23,7 @@ impl Plugin for Shell {
     }
 }
 
-async fn run_command_logic(input: String) -> Result<String, String> {
+pub async fn run_command_logic(input: String) -> Result<String, String> {
     let args = shell_words::split(&input)
         .map_err(|e| format!("Parse error: {}", e))?;
 
