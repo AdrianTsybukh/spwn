@@ -32,8 +32,9 @@
           
           # This ensures the binary finds libxkbcommon when run outside the shell
           postInstall = ''
-            wrapProgram $out/bin/spwn \
-              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath buildDeps}
+              wrapProgram $out/bin/spwn \
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath buildDeps} \
+              --prefix XDG_DATA_DIRS : "$XDG_DATA_DIRS"
           '';
         };
 

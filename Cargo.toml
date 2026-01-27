@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-freedesktop-desktop-entry = "0.8.1"
+applications = "0.3.1"
 iced = { version = "0.14.0", features = ["tokio"] }
 shell-words = "1.1.1"
 tokio = { version = "1.49.0", features = ["full"] }

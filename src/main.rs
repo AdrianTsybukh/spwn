@@ -3,7 +3,7 @@ mod plugin;
 
 use crate::plugin::Plugin;
 use crate::plugins::apps::{App, get_all_apps};
-use iced::widget::{column, text, text_input};
+use iced::widget::{column, scrollable, text, text_input};
 use iced::{Element, Size, Task, window};
 use iced::{Event, Subscription, event};
 use iced::keyboard::{self, key::Named};
@@ -24,6 +24,7 @@ struct Launcher {
     input_id: iced::widget::Id,
     plugins: Vec<Box<dyn Plugin>>,
     apps: Vec<App>,
+    filtered_apps: Vec<String>,
 }
 
 impl Launcher {
@@ -41,6 +42,7 @@ impl Launcher {
                     Box::new(plugins::shell::Shell),
                 ],
                 apps: apps,
+                filtered_apps: vec![],
             },
             iced::widget::operation::focus(input_id)
         )
