@@ -10,6 +10,7 @@ use iced::keyboard::{self, key::Named};
 
 #[derive(Debug, Clone)]
 enum Message {
+    Init(iced::window::Id),
     Run,
     Content(String),
     Completed(Result<String, String>),
@@ -47,7 +48,10 @@ impl Launcher {
                 filtered_apps: vec![],
                 selected_index: 0,
             },
-            iced::widget::operation::focus(input_id)
+            Task::batch(vec![
+                iced::widget::operation::focus(input_id),
+                window::latest().map(|id| Message::Init(id.expect("Window should exist at startup"))),
+            ])
         )
     }
 
@@ -75,7 +79,7 @@ impl Launcher {
 
                 if self.prompt.is_empty() {
                     self.filtered_apps.clear();
-                    return window::resize(self.window_id, Size { width: 500.0, height: 60.0 });
+                    return window::resize(self.window_id, Size { width: 500.0, height: 80.0 });
                 }
 
                 if !self.prompt.starts_with('>') {
@@ -88,7 +92,7 @@ impl Launcher {
                     self.filtered_apps.clear();
                 }
 
-                let height = if self.filtered_apps.is_empty() { 60.0 } else { 400.0 };
+                let height = if self.filtered_apps.is_empty() { 80.0 } else { 500.0 };
                 return window::resize(self.window_id, Size { width: 500.0, height });
             }
 
@@ -115,8 +119,10 @@ impl Launcher {
                     } else {
                         if let Some(app) = self.filtered_apps.get(self.selected_index) {
                             println!("Launching: {}", app.name);
-                            let res = plugin.execute(app.exec_path.as_str()).map(Message::Completed);
-                            return res;
+                            return Task::batch(vec![
+                                plugin.execute(app.exec_path.as_str()).map(Message::Completed),
+                                window::set_mode(self.window_id, window::Mode::Hidden)
+                            ]);
                         }
                     }
                 }
@@ -130,7 +136,12 @@ impl Launcher {
                 return window::resize(self.window_id, Size { width: 500.0, height: 500.0 });
             }
 
-            Message::Close => std::process::exit(0),
+            Message::Close => {
+                return window::set_mode(self.window_id, window::Mode::Hidden);
+            }
+            Message::Init(id) => {
+                self.window_id = id;
+            }
         }
         Task::none()
     }
@@ -169,7 +180,7 @@ impl Launcher {
                 }).collect::<Vec<Element<'_, Message>>>()
             );
 
-            content = content.push(scrollable(app_list).height(Length::Fixed(340.0)));
+            content = content.push(scrollable(app_list).height(Length::Fill));
         }
 
         if !self.output.is_empty() {
@@ -192,8 +203,8 @@ impl Launcher {
 fn main() -> iced::Result {
     let settings = window::Settings {
         decorations: false,
-        resizable: false,
-        size: Size { width: 500.0, height: 500.0 },
+        resizable: true,
+        size: Size { width: 500.0, height: 80.0 },
         level: window::Level::AlwaysOnTop,
         ..Default::default()
     };
@@ -203,6 +214,7 @@ fn main() -> iced::Result {
         .window(settings)
         .subscription(Launcher::subscription)
         .centered()
+        .exit_on_close_request(false)
         .theme(Theme::Dark)
         .run()
 }
