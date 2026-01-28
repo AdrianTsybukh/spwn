@@ -43,16 +43,44 @@ impl LinuxProvider {
         let mut exec = None;
         let mut icon = None;
         let mut is_hidden = false;
+        let mut in_main_section = false;
 
         for line in content.lines() {
-            if line.starts_with("Name=") {
-                name = Some(line.replace("Name=", ""));
-            } else if line.starts_with("Exec=") {
-                exec = Some(line.replace("Exec=", "").split_whitespace().next()?.to_string());
-            } else if line.starts_with("Icon=") {
-                icon = Some(line.replace("Icon=", ""));
-            } else if line.starts_with("NoDisplay=true") {
-                is_hidden = true;
+            let line = line.trim();
+
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            if line.starts_with('[') && line.ends_with(']') {
+                in_main_section = line == "[Desktop Entry]";
+
+                if !in_main_section && name.is_some() && exec.is_some() {
+                    break;
+                }
+                continue;
+            }
+
+            if !in_main_section {
+                continue;
+            }
+
+            if let Some((key, value)) = line.split_once('=') {
+                match key.trim() {
+                    "Name" => name = Some(value.trim().to_string()),
+                    "Exec" => {
+                        if let Some(binary) = value.trim().split_whitespace().next() {
+                            exec = Some(binary.to_string());
+                        }
+                    }
+                    "Icon" => icon = Some(value.trim().to_string()),
+                    "NoDisplay" => {
+                        if value.trim() == "true" {
+                            is_hidden = true;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 

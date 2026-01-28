@@ -39,17 +39,27 @@
         };
 
         # 'nix develop' / direnv output
-        devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy rust-analyzer ] ++ buildDeps;
-          nativeBuildInputs = nativeBuildDeps;
-          
-          RUST_SRC_PATH = rustPlatform.rustLibSrc;
+# 'nix develop' / direnv output
+         devShell = with pkgs; 
+           let
+             rustToolchain = symlinkJoin {
+               name = "rust-toolchain";
+               paths = [ cargo rustc rust-analyzer rustfmt rustPackages.clippy ];
+             };
+           in
+           mkShell {
+             buildInputs = [ rustToolchain ] ++ buildDeps;
+             nativeBuildInputs = nativeBuildDeps;
 
-          # This ensures 'cargo run' finds libxkbcommon
-          shellHook = ''
-            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildDeps}:$LD_LIBRARY_PATH
-          '';
-        };
+             RUST_SRC_PATH = "${rustPlatform.rustLibSrc}";
+
+             shellHook = ''
+                 export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath buildDeps}:$LD_LIBRARY_PATH
+                 export PATH="${rustToolchain}/bin:$PATH"
+# This specific sub-path is often what the IDE needs to 'see' the std crates
+                 export RUST_SRC_PATH="${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}"
+                 '';
+           };
       }
     );
 }

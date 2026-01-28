@@ -141,7 +141,8 @@ impl Launcher {
             .on_input(Message::Content)
             .on_submit(Message::Run)
             .padding(15)
-            .size(20);
+            .size(20)
+            .font(Font::MONOSPACE);
 
         let mut content = column![container(input).padding(10)].spacing(0);
 
@@ -149,7 +150,7 @@ impl Launcher {
             let app_list = column(
                 self.filtered_apps.iter().enumerate().map(|(i, app)| {
                     let is_selected = i == self.selected_index;
-                    
+
                     container(
                         text(&app.name)
                             .size(16)
@@ -157,7 +158,7 @@ impl Launcher {
                     )
                     .width(Length::Fill)
                     .padding(10)
-                    .style(move |_theme| { 
+                    .style(move |_theme| {
                         if is_selected {
                             container::Style::default().background(Color::from_rgb(0.2, 0.4, 0.8)).color(Color::WHITE)
                         } else {
