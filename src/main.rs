@@ -2,14 +2,20 @@ mod plugins;
 mod plugin;
 
 use crate::plugin::Plugin;
-use crate::plugins::apps::{App, get_all_apps};
-use iced::futures::SinkExt;
-use iced::widget::{column, container, scrollable, text, text_input};
-use iced::{Color, Element, Font, Length, Size, Task, Theme, stream, window};
-use iced::{Event, Subscription, event};
-use iced::keyboard::{self, key::Named};
-use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent, hotkey::{HotKey, Modifiers, Code}};
+use crate::plugins::apps::{get_all_apps, App};
 use iced::futures::channel::mpsc::Sender;
+use iced::futures::SinkExt;
+use iced::keyboard::{self, key::Named};
+use iced::widget::{column, container, scrollable, text, text_input};
+use iced::{event, stream, window};
+use iced::{Color, Element, Event, Font, Length, Size, Subscription, Task, Theme};
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+
+const WINDOW_WIDTH: f32 = 600.0;
+const ITEM_HEIGHT: f32 = 50.0;
+const INPUT_HEADER_HEIGHT: f32 = 76.0; 
+const MAX_WINDOW_HEIGHT: f32 = 522.0;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -40,7 +46,7 @@ impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let input_id = iced::widget::Id::unique();
         let window_id = iced::window::Id::unique();
-        
+
         let manager = GlobalHotKeyManager::new().expect("error while creating hotkey manager.");
         let hotkey = HotKey::new(Some(Modifiers::CONTROL), Code::Space);
         manager.register(hotkey).expect("failed to register hotkey.");
@@ -64,19 +70,42 @@ impl Launcher {
             Task::batch(vec![
                 iced::widget::operation::focus(input_id),
                 window::latest().map(|id| Message::Init(id.expect("Window should exist at startup"))),
-            ])
+            ]),
         )
     }
 
-    fn subscription(&self) -> Subscription<Message> {
+    fn adjust_window_size(&self) -> Task<Message> {
+        let mut content_height = 0.0;
 
+        if !self.output.is_empty() {
+             return window::resize(self.window_id, Size::new(WINDOW_WIDTH, MAX_WINDOW_HEIGHT));
+        }
+
+        if !self.filtered_apps.is_empty() {
+            let list_height = self.filtered_apps.len() as f32 * ITEM_HEIGHT;
+            content_height += list_height;
+        }
+
+        let total_required = INPUT_HEADER_HEIGHT + content_height;
+
+        let final_height = total_required.clamp(INPUT_HEADER_HEIGHT, MAX_WINDOW_HEIGHT);
+
+        window::resize(self.window_id, Size::new(WINDOW_WIDTH, final_height))
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
         let hotkey_subscription = Subscription::run(|| {
             stream::channel(1, |mut output: Sender<Message>| async move {
                 loop {
                     if let Ok(event) = tokio::task::spawn_blocking(|| {
                         GlobalHotKeyEvent::receiver().recv()
-                    }).await.unwrap() {
-                        let _ = output.send(Message::Toggle).await;
+                    })
+                    .await
+                    .unwrap()
+                    {
+                        if event.state == HotKeyState::Pressed {
+                            let _ = output.send(Message::Toggle).await;
+                        }
                     }
                 }
             })
@@ -95,15 +124,15 @@ impl Launcher {
                 } else {
                     None
                 }
-            })
+            }),
         ])
     }
-
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Init(id) => {
                 self.window_id = id;
+                return Task::none();
             }
 
             Message::Content(prompt) => {
@@ -113,10 +142,7 @@ impl Launcher {
 
                 if self.prompt.is_empty() {
                     self.filtered_apps.clear();
-                    return window::resize(self.window_id, Size { width: 500.0, height: 80.0 });
-                }
-
-                if !self.prompt.starts_with('>') {
+                } else if !self.prompt.starts_with('>') {
                     self.filtered_apps = self.apps
                         .iter()
                         .filter(|app| app.name.to_lowercase().contains(&self.prompt.to_lowercase()))
@@ -126,14 +152,14 @@ impl Launcher {
                     self.filtered_apps.clear();
                 }
 
-                let height = if self.filtered_apps.is_empty() { 80.0 } else { 500.0 };
-                return window::resize(self.window_id, Size { width: 500.0, height });
+                return self.adjust_window_size();
             }
 
             Message::NextResult => {
                 if !self.filtered_apps.is_empty() {
                     self.selected_index = (self.selected_index + 1) % self.filtered_apps.len();
                 }
+                return Task::none();
             }
 
             Message::PrevResult => {
@@ -144,23 +170,29 @@ impl Launcher {
                         self.selected_index -= 1;
                     }
                 }
+                return Task::none();
             }
 
             Message::Run => {
                 for plugin in &self.plugins {
                     if plugin.can_handle(&self.prompt) {
                         return plugin.execute(&self.prompt).map(Message::Completed);
-                    } else {
-                        if let Some(app) = self.filtered_apps.get(self.selected_index) {
-                            println!("Launching: {}", app.name);
-                            self.is_visible = false;
-                            return Task::batch(vec![
-                                plugin.execute(app.exec_path.as_str()).map(Message::Completed),
-                                window::set_mode(self.window_id, window::Mode::Hidden)
-                            ]);
-                        }
                     }
                 }
+                
+                if let Some(app) = self.filtered_apps.get(self.selected_index) {
+                    println!("Launching: {}", app.name);
+                    self.is_visible = false;
+                    
+                    let exec_path = app.exec_path.clone();
+                    let plugin_run = self.plugins[1].execute(&exec_path).map(Message::Completed);
+                    
+                    return Task::batch(vec![
+                        plugin_run,
+                        window::set_mode(self.window_id, window::Mode::Hidden),
+                    ]);
+                }
+                return Task::none();
             }
 
             Message::Completed(result) => {
@@ -168,12 +200,12 @@ impl Launcher {
                     Ok(out) => self.output = out,
                     Err(e) => self.output = e,
                 }
-                return window::resize(self.window_id, Size { width: 500.0, height: 500.0 });
+                return self.adjust_window_size();
             }
 
             Message::Close => {
                 self.is_visible = false;
-                return window::set_mode(self.window_id, window::Mode::Hidden);
+                return window::set_mode(self.window_id, window::Mode::Hidden)
             }
 
             Message::Toggle => {
@@ -184,14 +216,17 @@ impl Launcher {
                     self.filtered_apps.clear();
 
                     return Task::batch(vec![
+                        window::resize(self.window_id, Size::new(WINDOW_WIDTH, INPUT_HEADER_HEIGHT)),
                         window::set_mode(self.window_id, window::Mode::Windowed),
                         window::gain_focus(self.window_id),
                         iced::widget::operation::focus(self.input_id.clone()),
                     ]);
+                } else {
+                    self.is_visible = false;
+                    return window::set_mode(self.window_id, window::Mode::Hidden);
                 }
             }
         }
-        Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -216,7 +251,9 @@ impl Launcher {
                             .font(Font::MONOSPACE)
                     )
                     .width(Length::Fill)
-                    .padding(10)
+                    .height(Length::Fixed(ITEM_HEIGHT))
+                    .padding(15)
+                    .center_y(Length::Fill)
                     .style(move |_theme| {
                         if is_selected {
                             container::Style::default().background(Color::from_rgb(0.2, 0.4, 0.8)).color(Color::WHITE)
@@ -251,8 +288,8 @@ impl Launcher {
 fn main() -> iced::Result {
     let settings = window::Settings {
         decorations: false,
-        resizable: true,
-        size: Size { width: 500.0, height: 80.0 },
+        resizable: false,
+        size: Size { width: WINDOW_WIDTH, height: INPUT_HEADER_HEIGHT },
         level: window::Level::AlwaysOnTop,
         ..Default::default()
     };
