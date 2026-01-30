@@ -3,10 +3,13 @@ mod plugin;
 
 use crate::plugin::Plugin;
 use crate::plugins::apps::{App, get_all_apps};
+use iced::futures::SinkExt;
 use iced::widget::{column, container, scrollable, text, text_input};
-use iced::{Color, Element, Font, Length, Size, Task, Theme, window};
+use iced::{Color, Element, Font, Length, Size, Task, Theme, stream, window};
 use iced::{Event, Subscription, event};
 use iced::keyboard::{self, key::Named};
+use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent, hotkey::{HotKey, Modifiers, Code}};
+use iced::futures::channel::mpsc::Sender;
 
 #[derive(Debug, Clone)]
 enum Message {
@@ -17,6 +20,7 @@ enum Message {
     Close,
     NextResult,
     PrevResult,
+    Toggle,
 }
 
 struct Launcher {
@@ -28,12 +32,19 @@ struct Launcher {
     apps: Vec<App>,
     filtered_apps: Vec<App>,
     selected_index: usize,
+    hotkey_manager: GlobalHotKeyManager,
+    is_visible: bool,
 }
 
 impl Launcher {
     fn new() -> (Self, Task<Message>) {
         let input_id = iced::widget::Id::unique();
         let window_id = iced::window::Id::unique();
+        
+        let manager = GlobalHotKeyManager::new().expect("error while creating hotkey manager.");
+        let hotkey = HotKey::new(Some(Modifiers::CONTROL), Code::Space);
+        manager.register(hotkey).expect("failed to register hotkey.");
+
         (
             Self {
                 prompt: String::new(),
@@ -47,6 +58,8 @@ impl Launcher {
                 apps: get_all_apps(),
                 filtered_apps: vec![],
                 selected_index: 0,
+                hotkey_manager: manager,
+                is_visible: true,
             },
             Task::batch(vec![
                 iced::widget::operation::focus(input_id),
@@ -56,22 +69,43 @@ impl Launcher {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen().filter_map(|event| {
-            if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
-                match key {
-                    keyboard::Key::Named(Named::Escape) => Some(Message::Close),
-                    keyboard::Key::Named(Named::ArrowDown) => Some(Message::NextResult),
-                    keyboard::Key::Named(Named::ArrowUp) => Some(Message::PrevResult),
-                    _ => None,
+
+        let hotkey_subscription = Subscription::run(|| {
+            stream::channel(1, |mut output: Sender<Message>| async move {
+                loop {
+                    if let Ok(event) = tokio::task::spawn_blocking(|| {
+                        GlobalHotKeyEvent::receiver().recv()
+                    }).await.unwrap() {
+                        let _ = output.send(Message::Toggle).await;
+                    }
                 }
-            } else {
-                None
-            }
-        })
+            })
+        });
+
+        Subscription::batch(vec![
+            hotkey_subscription,
+            event::listen().filter_map(|event| {
+                if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
+                    match key {
+                        keyboard::Key::Named(Named::Escape) => Some(Message::Close),
+                        keyboard::Key::Named(Named::ArrowDown) => Some(Message::NextResult),
+                        keyboard::Key::Named(Named::ArrowUp) => Some(Message::PrevResult),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            })
+        ])
     }
+
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Init(id) => {
+                self.window_id = id;
+            }
+
             Message::Content(prompt) => {
                 self.prompt = prompt;
                 self.selected_index = 0;
@@ -119,6 +153,7 @@ impl Launcher {
                     } else {
                         if let Some(app) = self.filtered_apps.get(self.selected_index) {
                             println!("Launching: {}", app.name);
+                            self.is_visible = false;
                             return Task::batch(vec![
                                 plugin.execute(app.exec_path.as_str()).map(Message::Completed),
                                 window::set_mode(self.window_id, window::Mode::Hidden)
@@ -137,10 +172,23 @@ impl Launcher {
             }
 
             Message::Close => {
+                self.is_visible = false;
                 return window::set_mode(self.window_id, window::Mode::Hidden);
             }
-            Message::Init(id) => {
-                self.window_id = id;
+
+            Message::Toggle => {
+                if !self.is_visible {
+                    self.is_visible = true;
+                    self.prompt.clear();
+                    self.output.clear();
+                    self.filtered_apps.clear();
+
+                    return Task::batch(vec![
+                        window::set_mode(self.window_id, window::Mode::Windowed),
+                        window::gain_focus(self.window_id),
+                        iced::widget::operation::focus(self.input_id.clone()),
+                    ]);
+                }
             }
         }
         Task::none()

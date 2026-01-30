@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 applications = "0.3.1"
+global-hotkey = "0.7.0"
 iced = { version = "0.14.0", features = ["tokio"] }
 shell-words = "1.1.1"
 tokio = { version = "1.49.0", features = ["full"] }

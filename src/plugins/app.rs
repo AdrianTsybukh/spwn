@@ -1,5 +1,5 @@
 use crate::plugin::Plugin;
-use crate::plugins::shell::run_command_logic;
+use crate::plugins::utils::command::run_command;
 use iced::Task;
 
 pub struct AppPlugin;
@@ -17,7 +17,7 @@ impl Plugin for AppPlugin {
         let clean_input = input.to_string();
 
         Task::perform(async move {
-            run_command_logic(clean_input).await
+            run_command(clean_input).await
         }, |res| res)
     }
 }
